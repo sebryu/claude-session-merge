@@ -1,0 +1,10 @@
+# run logs written by the tool
+logs/
+*.log
+
+# LINK backups the tool creates (should never be inside the repo, but just in case)
+*.bak-*
+
+# macOS / editor cruft
+.DS_Store
+node_modules/

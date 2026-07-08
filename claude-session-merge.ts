@@ -20,13 +20,23 @@
  *   .jsonl transcripts, or the leveldb store (leveldb is scanned read-only, best-effort, only to REPORT pins).
  *   Backups are made before any destructive op; canonical files are never overwritten silently.
  *
+ * Revert: LINK is reversible. `--revert` scans for the `*.bak-<stamp>` dirs LINK left behind, drops each
+ *   symlink, and moves the newest backup back into place — restoring the pre-symlink state. It only ever
+ *   removes a symlink; a real directory sitting at the original path is treated as a conflict and skipped.
+ *
+ * Logging: every run is mirrored (ANSI stripped) to <scriptDir>/logs/session-merge-<ts>.log. Disable with
+ *   --no-log, or redirect with --log-file=<path>.
+ *
  * Usage:
  *   bun claude-session-merge.ts                         # fully interactive, dry-run
  *   bun claude-session-merge.ts --canonical=A/O --sources=B/O,C/O          # dry-run plan (no prompts)
  *   bun claude-session-merge.ts --canonical=A/O --all-others --apply        # apply MERGE only
  *   bun claude-session-merge.ts --canonical=A/O --all-others --link --apply --yes  # apply MERGE + LINK
+ *   bun claude-session-merge.ts --revert                                    # dry-run: show what LINK would undo
+ *   bun claude-session-merge.ts --revert --apply                           # restore pre-symlink backups
  *
- * Flags: --apply --canonical=<a>/<o> --sources=<a>/<o>[,...] --all-others --link --yes --help
+ * Flags: --apply --canonical=<a>/<o> --sources=<a>/<o>[,...] --all-others --link --revert
+ *        --log-file=<path> --no-log --yes --help
  */
 
 import fs from "node:fs";
@@ -47,6 +57,73 @@ const c = {
   blue: paint("34"),
   cyan: paint("36"),
 };
+
+// --- file logging: tee all stdout/stderr to a log file ----------------------
+// Every run is mirrored (ANSI stripped) to <scriptDir>/logs/session-merge-<ts>.log
+// unless --no-log is passed. Override the destination with --log-file=<path>.
+const ANSI_RE = /\x1b\[[0-9;]*m/g;
+let logFd: number | null = null;
+let logFilePath: string | null = null;
+
+function scriptDir(): string {
+  const meta = import.meta as unknown as { dir?: string; url: string };
+  if (typeof meta.dir === "string") return meta.dir;
+  return path.dirname(new URL(meta.url).pathname);
+}
+
+function writeLogRaw(line: string): void {
+  if (logFd == null) return;
+  try {
+    fs.writeSync(logFd, line);
+  } catch {
+    // logging must never break the run
+  }
+}
+
+function initLogging(explicitPath: string | undefined, argv: string[]): void {
+  try {
+    const target = explicitPath
+      ? path.resolve(explicitPath)
+      : path.join(scriptDir(), "logs", `session-merge-${timestamp()}.log`);
+    fs.mkdirSync(path.dirname(target), { recursive: true });
+    logFd = fs.openSync(target, "a");
+    logFilePath = target;
+
+    const patch =
+      (orig: (chunk: any, ...rest: any[]) => boolean) =>
+      function (chunk: any, ...rest: any[]): boolean {
+        try {
+          if (logFd != null) {
+            const s = typeof chunk === "string" ? chunk : Buffer.from(chunk).toString("utf8");
+            fs.writeSync(logFd, s.replace(ANSI_RE, ""));
+          }
+        } catch {
+          // ignore file write failures — the terminal write below still happens
+        }
+        return orig(chunk, ...rest);
+      };
+    process.stdout.write = patch(process.stdout.write.bind(process.stdout)) as typeof process.stdout.write;
+    process.stderr.write = patch(process.stderr.write.bind(process.stderr)) as typeof process.stderr.write;
+
+    writeLogRaw(`\n===== claude-session-merge @ ${new Date().toISOString()} =====\n`);
+    writeLogRaw(`argv: ${argv.length ? argv.join(" ") : "(none)"}\n\n`);
+  } catch (err) {
+    process.stderr.write(c.yellow(`warning: file logging disabled (${(err as Error).message})\n`));
+    logFd = null;
+    logFilePath = null;
+  }
+}
+
+function closeLogging(): void {
+  if (logFd == null) return;
+  writeLogRaw(`\n===== end @ ${new Date().toISOString()} =====\n`);
+  try {
+    fs.closeSync(logFd);
+  } catch {
+    // ignore
+  }
+  logFd = null;
+}
 
 const TREES = ["claude-code-sessions", "local-agent-mode-sessions"] as const;
 const SESSION_FILE_RE = /^local_.*\.json$/;
@@ -106,11 +183,14 @@ interface Location {
 interface Args {
   apply: boolean;
   link: boolean;
+  revert: boolean;
   yes: boolean;
   help: boolean;
   allOthers: boolean;
+  noLog: boolean;
   canonical?: string;
   sources?: string[];
+  logFile?: string;
 }
 interface CopyItem {
   tree: string;
@@ -158,13 +238,16 @@ interface Plan {
 
 // --- CLI parsing ------------------------------------------------------------
 function parseArgs(argv: string[]): Args {
-  const a: Args = { apply: false, link: false, yes: false, help: false, allOthers: false };
+  const a: Args = { apply: false, link: false, revert: false, yes: false, help: false, allOthers: false, noLog: false };
   for (const raw of argv) {
     if (raw === "--apply") a.apply = true;
     else if (raw === "--link") a.link = true;
+    else if (raw === "--revert") a.revert = true;
     else if (raw === "--yes" || raw === "-y") a.yes = true;
     else if (raw === "--help" || raw === "-h") a.help = true;
     else if (raw === "--all-others") a.allOthers = true;
+    else if (raw === "--no-log") a.noLog = true;
+    else if (raw.startsWith("--log-file=")) a.logFile = raw.slice("--log-file=".length).trim();
     else if (raw.startsWith("--canonical=")) a.canonical = raw.slice("--canonical=".length).trim();
     else if (raw.startsWith("--sources=")) {
       a.sources = raw
@@ -190,20 +273,26 @@ ${b("FLAGS")}
   --sources=<a>/<o>[,...]    One or more source locations to merge FROM.
   --all-others               Use every non-canonical location as a source.
   --link                     Also do Step B: back up each source org dir and symlink it to canonical.
+  --revert                   Undo a previous --link: restore each *.bak-<ts> backup over its symlink.
   --apply                    Execute changes. Without this flag the tool is a DRY RUN (nothing changes).
   --yes, -y                  Skip the confirmation prompt on --apply.
+  --log-file=<path>          Write the run log here (default: <script-dir>/logs/session-merge-<ts>.log).
+  --no-log                   Disable file logging for this run.
   --help, -h                 Show this help.
 
 ${b("CONCEPT")}
   A "location" is an <account>/<org> pair under the two session trees. MERGE (non-destructive) copies
   pointer files/dirs from sources INTO canonical across both trees and unions spaces.json by id
   (canonical wins). LINK (destructive, opt-in) replaces each source org dir with a symlink to canonical.
+  REVERT undoes LINK by restoring the *.bak-<ts> backups it left behind. Every run is logged to a file.
 
 ${b("EXAMPLES")}
   bun claude-session-merge.ts                                              # interactive, dry-run
   bun claude-session-merge.ts --canonical=A/O --sources=B/O                # dry-run plan
   bun claude-session-merge.ts --canonical=A/O --all-others --apply         # apply MERGE only
   bun claude-session-merge.ts --canonical=A/O --all-others --link --apply  # apply MERGE + LINK
+  bun claude-session-merge.ts --revert                                     # dry-run: preview the undo
+  bun claude-session-merge.ts --revert --apply                            # restore pre-symlink backups
 `
   );
 }
@@ -656,6 +745,236 @@ async function confirm(rl: readline.Interface, message: string): Promise<boolean
   return ans.toLowerCase() === "yes";
 }
 
+// --- revert (undo Step B / --link) ------------------------------------------
+// LINK backs up each source org dir to `<org>.bak-<stamp>` then replaces the org dir
+// with a symlink to canonical. REVERT reverses that: drop the symlink and move the
+// newest backup back into place. It only ever removes a SYMLINK — a real directory at
+// the original path is treated as a conflict and left untouched.
+interface BackupEntry {
+  tree: string;
+  account: string;
+  originalName: string;
+  stamp: string;
+  backupDir: string;
+  originalDir: string;
+  currentExists: boolean;
+  currentIsSymlink: boolean;
+  currentIsRealDir: boolean;
+  symlinkTarget: string | null;
+}
+
+function readLinkSafe(p: string): string | null {
+  try {
+    return fs.readlinkSync(p);
+  } catch {
+    return null;
+  }
+}
+
+const BACKUP_RE = /^(.*)\.bak-(.+)$/;
+
+function discoverBackups(base: string): BackupEntry[] {
+  const out: BackupEntry[] = [];
+  for (const tree of TREES) {
+    const treeDir = path.join(base, tree);
+    if (!isDir(treeDir)) continue;
+    for (const account of listDirs(treeDir)) {
+      const accDir = path.join(treeDir, account);
+      let dirents: fs.Dirent[];
+      try {
+        dirents = fs.readdirSync(accDir, { withFileTypes: true });
+      } catch {
+        continue;
+      }
+      for (const d of dirents) {
+        const m = d.name.match(BACKUP_RE);
+        if (!m) continue;
+        const backupDir = path.join(accDir, d.name);
+        if (!isDir(backupDir)) continue; // only our directory backups
+        const originalDir = path.join(accDir, m[1]);
+        const currentExists = exists(originalDir);
+        const currentIsSymlink = isSymlink(originalDir);
+        out.push({
+          tree,
+          account,
+          originalName: m[1],
+          stamp: m[2],
+          backupDir,
+          originalDir,
+          currentExists,
+          currentIsSymlink,
+          currentIsRealDir: currentExists && !currentIsSymlink && isDir(originalDir),
+          symlinkTarget: currentIsSymlink ? readLinkSafe(originalDir) : null,
+        });
+      }
+    }
+  }
+  return out.sort(
+    (a, b) =>
+      a.tree.localeCompare(b.tree) ||
+      a.account.localeCompare(b.account) ||
+      a.originalName.localeCompare(b.originalName) ||
+      a.stamp.localeCompare(b.stamp)
+  );
+}
+
+interface RevertItem {
+  chosen: BackupEntry;
+  older: BackupEntry[]; // additional, older backups left in place
+  action: "restore" | "conflict";
+  reason?: string;
+}
+
+function buildRevertItems(backups: BackupEntry[]): RevertItem[] {
+  // group by tree/account/originalName; newest stamp wins (ISO stamps sort lexically)
+  const groups = new Map<string, BackupEntry[]>();
+  for (const b of backups) {
+    const key = `${b.tree} ${b.account} ${b.originalName}`;
+    const arr = groups.get(key) ?? [];
+    arr.push(b);
+    groups.set(key, arr);
+  }
+  const items: RevertItem[] = [];
+  for (const arr of groups.values()) {
+    arr.sort((a, b) => b.stamp.localeCompare(a.stamp)); // newest first
+    const [chosen, ...older] = arr;
+    let action: "restore" | "conflict" = "restore";
+    let reason: string | undefined;
+    if (chosen.currentIsRealDir) {
+      action = "conflict";
+      reason = "a real directory (not a symlink) sits at the original path";
+    } else if (chosen.currentExists && !chosen.currentIsSymlink) {
+      action = "conflict";
+      reason = "an unexpected non-directory entry sits at the original path";
+    }
+    items.push({ chosen, older, action, reason });
+  }
+  return items.sort(
+    (a, b) =>
+      a.chosen.tree.localeCompare(b.chosen.tree) ||
+      a.chosen.account.localeCompare(b.chosen.account) ||
+      a.chosen.originalName.localeCompare(b.chosen.originalName)
+  );
+}
+
+function printRevertPlan(items: RevertItem[]): void {
+  const out = process.stdout;
+  out.write("\n" + c.bold("REVERT PLAN") + c.dim(" (undo --link)") + "\n");
+  if (items.length === 0) {
+    out.write(`  ${c.dim("no *.bak-<stamp> backups found — nothing to revert.")}\n`);
+    return;
+  }
+  let restores = 0;
+  let conflicts = 0;
+  for (const it of items) {
+    const b = it.chosen;
+    const loc = `${b.account}/${b.originalName}`;
+    if (it.action === "conflict") {
+      conflicts += 1;
+      out.write(`    [${b.tree}] ${c.yellow("!")} ${c.blue(loc)}  ${c.yellow("(skipped: " + it.reason + ")")}\n`);
+    } else {
+      restores += 1;
+      const cur = b.currentIsSymlink
+        ? `symlink -> ${b.symlinkTarget ?? "?"}`
+        : b.currentExists
+          ? "existing entry"
+          : c.dim("(nothing there)");
+      out.write(`    [${b.tree}] ${c.green("↺")} ${c.blue(loc)}\n`);
+      out.write(`        current: ${cur}\n`);
+      out.write(`        restore: ${c.cyan(b.backupDir)}\n`);
+      out.write(`             ->  ${b.originalDir}\n`);
+    }
+    if (it.older.length > 0)
+      out.write(`        ${c.dim(`(${it.older.length} older backup(s) left in place)`)}\n`);
+  }
+  out.write(
+    `\n  ${c.bold("Totals")}: ${c.green(String(restores))} to restore, ` +
+      `${conflicts ? c.yellow(String(conflicts)) : "0"} conflict(s) skipped\n`
+  );
+}
+
+interface RevertResult {
+  restored: number;
+  removedSymlinks: number;
+  errors: string[];
+}
+
+function executeRevert(items: RevertItem[]): RevertResult {
+  const r: RevertResult = { restored: 0, removedSymlinks: 0, errors: [] };
+  for (const it of items) {
+    if (it.action !== "restore") continue;
+    const b = it.chosen;
+    try {
+      if (b.currentIsSymlink) {
+        fs.unlinkSync(b.originalDir);
+        r.removedSymlinks += 1;
+      }
+      if (exists(b.originalDir)) {
+        r.errors.push(`restore ${b.originalDir}: path still exists after clearing symlink — skipped`);
+        continue;
+      }
+      fs.renameSync(b.backupDir, b.originalDir);
+      r.restored += 1;
+    } catch (err) {
+      r.errors.push(`restore ${b.backupDir} -> ${b.originalDir}: ${(err as Error).message}`);
+    }
+  }
+  return r;
+}
+
+async function runRevert(base: string, args: Args): Promise<void> {
+  process.stdout.write(c.bold("claude-session-merge") + c.dim(" — revert (macOS)") + "\n");
+  process.stdout.write(`BASE: ${c.cyan(base)}\n`);
+
+  const items = buildRevertItems(discoverBackups(base));
+  printRevertPlan(items);
+
+  const restorable = items.filter((it) => it.action === "restore");
+
+  if (!args.apply) {
+    process.stdout.write("\n" + c.bold(c.yellow("DRY RUN — no filesystem changes were made.")) + "\n");
+    if (restorable.length > 0)
+      process.stdout.write(c.dim("Re-run with --revert --apply to restore the backups above.\n"));
+    return;
+  }
+
+  if (restorable.length === 0) {
+    process.stdout.write("\n" + c.green("Nothing to restore — done.") + "\n");
+    return;
+  }
+
+  process.stdout.write(
+    "\n" + c.yellow("⚠  QUIT the Claude desktop app before reverting, or it may recreate the symlinked dirs.\n")
+  );
+
+  if (!args.yes) {
+    requireTty("Confirmation");
+    const rl = readline.createInterface({ input: stdin, output: stdout });
+    try {
+      const ok = await confirm(rl, "Proceed with REVERT (restore pre-symlink backups)?");
+      if (!ok) {
+        process.stdout.write(c.yellow("Aborted — no changes made.\n"));
+        return;
+      }
+    } finally {
+      rl.close();
+    }
+  }
+
+  const result = executeRevert(items);
+  process.stdout.write("\n" + c.bold("SUMMARY") + "\n");
+  process.stdout.write(
+    `  Restored: ${c.green(String(result.restored))} dir(s) (${result.removedSymlinks} symlink(s) removed)\n`
+  );
+  if (result.errors.length) {
+    process.stdout.write(c.red(`  ${result.errors.length} error(s):\n`));
+    for (const e of result.errors) process.stdout.write(c.red(`    - ${e}\n`));
+  }
+  process.stdout.write(
+    "\n" + c.cyan("Reopen the Claude desktop app to confirm each account shows its own sessions again.") + "\n"
+  );
+}
+
 // --- main -------------------------------------------------------------------
 async function main(): Promise<void> {
   const args = parseArgs(process.argv.slice(2));
@@ -670,6 +989,20 @@ async function main(): Promise<void> {
   const base = path.join(os.homedir(), "Library/Application Support/Claude");
   if (!isDir(base))
     fail(`Claude desktop data dir not found at:\n  ${base}\nIs the Claude desktop app installed for this user?`);
+
+  if (!args.noLog) {
+    initLogging(args.logFile, process.argv.slice(2));
+    if (logFilePath) process.stdout.write(c.dim(`Logging to: ${logFilePath}`) + "\n");
+  }
+
+  if (args.revert) {
+    try {
+      await runRevert(base, args);
+    } finally {
+      closeLogging();
+    }
+    return;
+  }
 
   const config = readJson(path.join(base, "config.json")) || {};
   const activeAccount: string | undefined = config.lastKnownAccountUuid;
@@ -791,6 +1124,7 @@ async function main(): Promise<void> {
     process.stdout.write("\n" + c.cyan("Reopen the Claude desktop app to see the merged sessions.") + "\n");
   } finally {
     if (rl) rl.close();
+    closeLogging();
   }
 }
 

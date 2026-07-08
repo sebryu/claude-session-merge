@@ -62,6 +62,10 @@ bun claude-session-merge.ts --canonical=<acct>/<org> --sources=<acct>/<org> --ap
 
 # 3. Keep them in sync: quit the desktop app first, then link
 bun claude-session-merge.ts --canonical=<acct>/<org> --sources=<acct>/<org> --link --apply
+
+# 4. Changed your mind? Undo the linking (quit the desktop app first)
+bun claude-session-merge.ts --revert            # dry-run: preview what gets restored
+bun claude-session-merge.ts --revert --apply    # restore the pre-symlink backups
 ```
 
 | Flag | Meaning |
@@ -70,19 +74,49 @@ bun claude-session-merge.ts --canonical=<acct>/<org> --sources=<acct>/<org> --li
 | `--sources=<a>/<o>[,...]` | Source locations to merge from |
 | `--all-others` | Use every non-canonical location as a source |
 | `--link` | Also do Step B: back up each source folder and symlink it to canonical |
+| `--revert` | Undo a previous `--link`: restore each `*.bak-<ts>` backup over its symlink |
 | `--apply` | Execute. Without it, the tool is a dry run |
 | `--yes`, `-y` | Skip the confirmation prompt on `--apply` |
+| `--log-file=<path>` | Write the run log here (default: `logs/session-merge-<ts>.log`) |
+| `--no-log` | Disable file logging for this run |
 | `--help`, `-h` | Show help |
+
+## Reverting a link
+
+`--link` is fully reversible. It leaves a `*.bak-<timestamp>` backup next to every folder it turns into a symlink, and `--revert` walks those backups to put things back:
+
+```sh
+bun claude-session-merge.ts --revert          # dry-run: show which symlinks would be restored
+bun claude-session-merge.ts --revert --apply  # drop each symlink, move the newest backup back
+```
+
+- It only ever removes a **symlink**. If a real directory has reappeared at the original path (e.g. the desktop app recreated it), that's reported as a conflict and left untouched — nothing is overwritten.
+- When several backups exist for the same folder, the **newest** is restored and older ones are left in place.
+- Quit the desktop app first, same as with `--link`.
+
+The merged copies inside canonical are *not* touched by revert — reverting only undoes the symlinking (Step B), returning each account to its own independent folder.
+
+## Logging
+
+Every run is mirrored to a log file (ANSI colors stripped) so you have a record of exactly what was planned and applied:
+
+```
+logs/session-merge-<timestamp>.log     # default, next to the script
+```
+
+- `--log-file=<path>` writes the log somewhere else.
+- `--no-log` turns file logging off for that run.
+
+The `logs/` folder is git-ignored.
 
 ## Safety
 
 - **Dry-run by default** — nothing changes without `--apply`.
 - **Never overwrites** canonical files; conflicts are reported and canonical is kept.
-- **Backs up** every folder before replacing it with a symlink (`*.bak-<timestamp>`).
+- **Backs up** every folder before replacing it with a symlink (`*.bak-<timestamp>`), and `--revert` restores those backups.
 - **Read-only** on LevelDB; **never touches** `~/.claude` transcripts.
-- Quit the desktop app before `--link` so it doesn't recreate the folders mid-operation.
-
-To undo a `--link`: delete the symlink and rename its `*.bak-<timestamp>` back.
+- **Every run is logged** to a file for an audit trail.
+- Quit the desktop app before `--link` or `--revert` so it doesn't recreate the folders mid-operation.
 
 ## License
 
