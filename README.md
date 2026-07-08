@@ -6,6 +6,16 @@ Merge and sync **Claude desktop app** sessions across accounts — macOS, zero d
 
 Not affiliated with Anthropic. It only reorganizes local files the desktop app already wrote; it never uploads anything and never touches your transcripts.
 
+## Quick start
+
+```sh
+cd claude-session-merge
+bun claude-session-merge.ts            # dry-run: discover accounts, print a plan, change nothing
+bun claude-session-merge.ts --revert   # dry-run: preview undoing a previous --link
+```
+
+That's the whole tool — **one command**; everything else is a flag, and **nothing changes until you add `--apply`.** See [Usage](#usage) for the flag table.
+
 ---
 
 ## The storage model (why this is safe)
@@ -36,6 +46,19 @@ Requires [Bun](https://bun.sh) and macOS.
 git clone https://github.com/sebryu/claude-session-merge.git
 cd claude-session-merge
 bun claude-session-merge.ts        # dry-run: discovers accounts, prints a plan, changes nothing
+```
+
+The script is executable (it has a `#!/usr/bin/env bun` shebang), so you can also skip the `bun` prefix:
+
+```sh
+./claude-session-merge.ts --revert
+```
+
+Want it as a global command you can run from any directory? Run once, inside the repo:
+
+```sh
+bun link                        # registers the `claude-session-merge` bin
+claude-session-merge --help     # now works anywhere
 ```
 
 Or grab just the script:
