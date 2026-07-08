@@ -550,6 +550,13 @@ function printPlan(plan: Plan, linkMode: boolean): void {
   if (linkMode) {
     out.write("\n" + c.red(c.bold("  LINK (DESTRUCTIVE) — Step B")) + "\n");
     out.write(
+      c.dim("  Each source org dir is backed up to ") +
+        c.cyan("*.bak-<timestamp>") +
+        c.dim(" before it becomes a symlink, so this is\n  fully reversible — undo it later with ") +
+        c.bold("--revert") +
+        c.dim(" (restores the backups).\n")
+    );
+    out.write(
       c.yellow("  ⚠  QUIT the Claude desktop app before applying LINK, or it may recreate/overwrite these dirs.\n")
     );
     if (plan.linkPlans.length === 0) out.write(`    ${c.dim("no source org dirs to link")}\n`);
@@ -1096,6 +1103,11 @@ async function main(): Promise<void> {
         "\n" +
           c.red(c.bold("⚠  DESTRUCTIVE: LINK will back up and REPLACE source org dirs with symlinks.")) +
           "\n" +
+          c.dim("   A ") +
+          c.cyan("*.bak-<timestamp>") +
+          c.dim(" copy of each dir is kept — reverse it anytime with ") +
+          c.bold("--revert") +
+          c.dim(".\n") +
           c.yellow("   QUIT the Claude desktop app now, before proceeding.\n")
       );
 
@@ -1115,6 +1127,12 @@ async function main(): Promise<void> {
     process.stdout.write(`  spaces.json: ${result.spacesWritten ? c.green("written") : c.dim("unchanged")}\n`);
     if (linkMode)
       process.stdout.write(`  Linked: ${c.green(String(result.linked))} dir(s) symlinked, ${result.backedUp} backed up\n`);
+    if (linkMode && result.linked > 0)
+      process.stdout.write(
+        c.dim("  Undo anytime with ") +
+          c.bold("--revert --apply") +
+          c.dim(" (restores the *.bak-<ts> backups).\n")
+      );
     if (result.errors.length) {
       process.stdout.write(c.red(`  ${result.errors.length} error(s):\n`));
       for (const e of result.errors) process.stdout.write(c.red(`    - ${e}\n`));
