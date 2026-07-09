@@ -98,12 +98,13 @@ The macOS desktop app keeps two different things in two different places:
 |---|---|---|
 | **Transcripts** (the actual conversation) | `~/.claude/projects/<encoded-cwd>/<id>.jsonl` | **No** — global, shared with the CLI |
 | **Session index** (pointer files: title, model, cwd, archive state) | `~/Library/Application Support/Claude/{claude-code-sessions,local-agent-mode-sessions}/<accountUuid>/<orgUuid>/local_<id>.json` | **Yes** — one folder per account/org |
+| **Routines** (scheduled tasks: cron, model, enabled state) | `…/{claude-code-sessions,local-agent-mode-sessions}/<accountUuid>/<orgUuid>/scheduled-tasks.json` | **Yes** — one file per account/org, per tree |
 
 Because the transcripts are global, switching accounts never loses a conversation — the desktop UI just stops *listing* it, since it reads a different `<account>/<org>` folder. This tool only reorganizes the small pointer files. **It never reads, writes, moves, or deletes anything under `~/.claude` or any `.jsonl`.**
 
 ## How it works — canonical merge, then link
 
-1. **MERGE** (non-destructive) — pick one **canonical** `<account>/<org>`. Copy the pointer files that exist only in other accounts *into* canonical. Union `spaces.json` by id. Archive flags ride along inside each pointer file.
+1. **MERGE** (non-destructive) — pick one **canonical** `<account>/<org>`. Copy the pointer files that exist only in other accounts *into* canonical. Union `spaces.json` and `scheduled-tasks.json` (your **routines**) by id — canonical wins on any collision. Archive flags ride along inside each pointer file.
 2. **LINK** (opt-in, `--link`) — back up each other account's folder to `*.bak-<timestamp>` and replace it with a symlink to canonical, so all accounts share one live set going forward.
 
 The one rule that keeps it consistent: **copy _into_ canonical; symlink every other account _at_ canonical.** Never copy into a folder you then link away.
