@@ -1,6 +1,6 @@
-#!/usr/bin/env bun
+#!/usr/bin/env node
 /**
- * claude-session-merge — merge Claude desktop-app session metadata across accounts (macOS only).
+ * claude-desktop-merge — merge Claude desktop-app session metadata across accounts (macOS only).
  *
  * Storage model (BASE = ~/Library/Application Support/Claude):
  *   Two parallel "session-tree" dirs hold desktop session POINTER/index files (not transcripts):
@@ -24,16 +24,16 @@
  *   symlink, and moves the newest backup back into place — restoring the pre-symlink state. It only ever
  *   removes a symlink; a real directory sitting at the original path is treated as a conflict and skipped.
  *
- * Logging: every run is mirrored (ANSI stripped) to <scriptDir>/logs/session-merge-<ts>.log. Disable with
+ * Logging: every run is mirrored (ANSI stripped) to <scriptDir>/logs/desktop-merge-<ts>.log. Disable with
  *   --no-log, or redirect with --log-file=<path>.
  *
  * Usage:
- *   bun claude-session-merge.ts                         # fully interactive, dry-run
- *   bun claude-session-merge.ts --canonical=A/O --sources=B/O,C/O          # dry-run plan (no prompts)
- *   bun claude-session-merge.ts --canonical=A/O --all-others --apply        # apply MERGE only
- *   bun claude-session-merge.ts --canonical=A/O --all-others --link --apply --yes  # apply MERGE + LINK
- *   bun claude-session-merge.ts --revert                                    # dry-run: show what LINK would undo
- *   bun claude-session-merge.ts --revert --apply                           # restore pre-symlink backups
+ *   bun claude-desktop-merge.ts                         # fully interactive, dry-run
+ *   bun claude-desktop-merge.ts --canonical=A/O --sources=B/O,C/O          # dry-run plan (no prompts)
+ *   bun claude-desktop-merge.ts --canonical=A/O --all-others --apply        # apply MERGE only
+ *   bun claude-desktop-merge.ts --canonical=A/O --all-others --link --apply --yes  # apply MERGE + LINK
+ *   bun claude-desktop-merge.ts --revert                                    # dry-run: show what LINK would undo
+ *   bun claude-desktop-merge.ts --revert --apply                           # restore pre-symlink backups
  *
  * Flags: --apply --canonical=<a>/<o> --sources=<a>/<o>[,...] --all-others --link --revert
  *        --log-file=<path> --no-log --yes --help
@@ -59,7 +59,7 @@ const c = {
 };
 
 // --- file logging: tee all stdout/stderr to a log file ----------------------
-// Every run is mirrored (ANSI stripped) to <scriptDir>/logs/session-merge-<ts>.log
+// Every run is mirrored (ANSI stripped) to <scriptDir>/logs/desktop-merge-<ts>.log
 // unless --no-log is passed. Override the destination with --log-file=<path>.
 const ANSI_RE = /\x1b\[[0-9;]*m/g;
 let logFd: number | null = null;
@@ -84,7 +84,7 @@ function initLogging(explicitPath: string | undefined, argv: string[]): void {
   try {
     const target = explicitPath
       ? path.resolve(explicitPath)
-      : path.join(scriptDir(), "logs", `session-merge-${timestamp()}.log`);
+      : path.join(scriptDir(), "logs", `desktop-merge-${timestamp()}.log`);
     fs.mkdirSync(path.dirname(target), { recursive: true });
     logFd = fs.openSync(target, "a");
     logFilePath = target;
@@ -105,7 +105,7 @@ function initLogging(explicitPath: string | undefined, argv: string[]): void {
     process.stdout.write = patch(process.stdout.write.bind(process.stdout)) as typeof process.stdout.write;
     process.stderr.write = patch(process.stderr.write.bind(process.stderr)) as typeof process.stderr.write;
 
-    writeLogRaw(`\n===== claude-session-merge @ ${new Date().toISOString()} =====\n`);
+    writeLogRaw(`\n===== claude-desktop-merge @ ${new Date().toISOString()} =====\n`);
     writeLogRaw(`argv: ${argv.length ? argv.join(" ") : "(none)"}\n\n`);
   } catch (err) {
     process.stderr.write(c.yellow(`warning: file logging disabled (${(err as Error).message})\n`));
@@ -263,10 +263,10 @@ function parseArgs(argv: string[]): Args {
 function printHelp(): void {
   const b = c.bold;
   process.stdout.write(
-    `${b("claude-session-merge")} — merge Claude desktop session metadata across accounts (macOS only)
+    `${b("claude-desktop-merge")} — merge Claude desktop session metadata across accounts (macOS only)
 
 ${b("USAGE")}
-  bun claude-session-merge.ts [flags]
+  claude-desktop-merge [flags]
 
 ${b("FLAGS")}
   --canonical=<acct>/<org>   Target location that receives the merged sessions.
@@ -276,7 +276,7 @@ ${b("FLAGS")}
   --revert                   Undo a previous --link: restore each *.bak-<ts> backup over its symlink.
   --apply                    Execute changes. Without this flag the tool is a DRY RUN (nothing changes).
   --yes, -y                  Skip the confirmation prompt on --apply.
-  --log-file=<path>          Write the run log here (default: <script-dir>/logs/session-merge-<ts>.log).
+  --log-file=<path>          Write the run log here (default: <script-dir>/logs/desktop-merge-<ts>.log).
   --no-log                   Disable file logging for this run.
   --help, -h                 Show this help.
 
@@ -287,12 +287,12 @@ ${b("CONCEPT")}
   REVERT undoes LINK by restoring the *.bak-<ts> backups it left behind. Every run is logged to a file.
 
 ${b("EXAMPLES")}
-  bun claude-session-merge.ts                                              # interactive, dry-run
-  bun claude-session-merge.ts --canonical=A/O --sources=B/O                # dry-run plan
-  bun claude-session-merge.ts --canonical=A/O --all-others --apply         # apply MERGE only
-  bun claude-session-merge.ts --canonical=A/O --all-others --link --apply  # apply MERGE + LINK
-  bun claude-session-merge.ts --revert                                     # dry-run: preview the undo
-  bun claude-session-merge.ts --revert --apply                            # restore pre-symlink backups
+  claude-desktop-merge                                              # interactive, dry-run
+  claude-desktop-merge --canonical=A/O --sources=B/O                # dry-run plan
+  claude-desktop-merge --canonical=A/O --all-others --apply         # apply MERGE only
+  claude-desktop-merge --canonical=A/O --all-others --link --apply  # apply MERGE + LINK
+  claude-desktop-merge --revert                                     # dry-run: preview the undo
+  claude-desktop-merge --revert --apply                             # restore pre-symlink backups
 `
   );
 }
@@ -930,7 +930,7 @@ function executeRevert(items: RevertItem[]): RevertResult {
 }
 
 async function runRevert(base: string, args: Args): Promise<void> {
-  process.stdout.write(c.bold("claude-session-merge") + c.dim(" — revert (macOS)") + "\n");
+  process.stdout.write(c.bold("claude-desktop-merge") + c.dim(" — revert (macOS)") + "\n");
   process.stdout.write(`BASE: ${c.cyan(base)}\n`);
 
   const items = buildRevertItems(discoverBackups(base));
@@ -1014,7 +1014,7 @@ async function main(): Promise<void> {
   const config = readJson(path.join(base, "config.json")) || {};
   const activeAccount: string | undefined = config.lastKnownAccountUuid;
 
-  process.stdout.write(c.bold("claude-session-merge") + c.dim(" (macOS)") + "\n");
+  process.stdout.write(c.bold("claude-desktop-merge") + c.dim(" (macOS)") + "\n");
   process.stdout.write(`BASE: ${c.cyan(base)}\n`);
   process.stdout.write(`Active account (lastKnownAccountUuid): ${activeAccount ? c.green(activeAccount) : c.yellow("unknown")}\n`);
 

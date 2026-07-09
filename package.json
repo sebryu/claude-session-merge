@@ -1,16 +1,16 @@
 {
-  "name": "claude-session-merge",
+  "name": "claude-desktop-merge",
   "version": "1.0.0",
-  "description": "Merge & sync Claude desktop-app sessions across accounts (macOS, zero-dependency Bun CLI, dry-run by default).",
+  "description": "Merge & sync Claude desktop-app sessions across accounts (macOS, zero-dependency, dry-run by default).",
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/sebryu/claude-session-merge.git"
+    "url": "git+https://github.com/sebryu/claude-desktop-merge.git"
   },
   "bin": {
-    "claude-session-merge": "./claude-session-merge.ts"
+    "claude-desktop-merge": "./claude-desktop-merge.ts"
   },
   "scripts": {
-    "start": "bun claude-session-merge.ts"
+    "start": "bun claude-desktop-merge.ts"
   }
 }

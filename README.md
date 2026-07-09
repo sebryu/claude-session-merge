@@ -1,4 +1,4 @@
-# claude-session-merge
+# claude-desktop-merge
 
 Merge and sync **Claude desktop app** sessions across accounts — macOS, zero dependencies, dry-run by default.
 
@@ -9,9 +9,9 @@ Not affiliated with Anthropic. It only reorganizes local files the desktop app a
 ## Quick start
 
 ```sh
-cd claude-session-merge
-bun claude-session-merge.ts            # dry-run: discover accounts, print a plan, change nothing
-bun claude-session-merge.ts --revert   # dry-run: preview undoing a previous --link
+cd claude-desktop-merge
+bun claude-desktop-merge.ts            # dry-run: discover accounts, print a plan, change nothing
+bun claude-desktop-merge.ts --revert   # dry-run: preview undoing a previous --link
 ```
 
 That's the whole tool — **one command**; everything else is a flag, and **nothing changes until you add `--apply`.** See [Usage](#usage) for the flag table.
@@ -43,52 +43,52 @@ Pinned/grouped sessions live in a single global LevelDB keyed by session id, so 
 Requires [Bun](https://bun.sh) and macOS.
 
 ```sh
-git clone https://github.com/sebryu/claude-session-merge.git
-cd claude-session-merge
-bun claude-session-merge.ts        # dry-run: discovers accounts, prints a plan, changes nothing
+git clone https://github.com/sebryu/claude-desktop-merge.git
+cd claude-desktop-merge
+bun claude-desktop-merge.ts        # dry-run: discovers accounts, prints a plan, changes nothing
 ```
 
 The script is executable (it has a `#!/usr/bin/env bun` shebang), so you can also skip the `bun` prefix:
 
 ```sh
-./claude-session-merge.ts --revert
+./claude-desktop-merge.ts --revert
 ```
 
 Want it as a global command you can run from any directory? Run once, inside the repo:
 
 ```sh
-bun link                        # registers the `claude-session-merge` bin
-claude-session-merge --help     # now works anywhere
+bun link                        # registers the `claude-desktop-merge` bin
+claude-desktop-merge --help     # now works anywhere
 ```
 
 Or grab just the script:
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/sebryu/claude-session-merge/main/claude-session-merge.ts -o claude-session-merge.ts
-bun claude-session-merge.ts
+curl -fsSL https://raw.githubusercontent.com/sebryu/claude-desktop-merge/main/claude-desktop-merge.ts -o claude-desktop-merge.ts
+bun claude-desktop-merge.ts
 ```
 
 ## Usage
 
 ```
-bun claude-session-merge.ts [flags]
+bun claude-desktop-merge.ts [flags]
 ```
 
 Everything is a **dry run** until you pass `--apply`.
 
 ```sh
 # 1. See what's there (interactive picker + plan, no changes)
-bun claude-session-merge.ts
+bun claude-desktop-merge.ts
 
 # 2. Merge one account's sessions into another
-bun claude-session-merge.ts --canonical=<acct>/<org> --sources=<acct>/<org> --apply
+bun claude-desktop-merge.ts --canonical=<acct>/<org> --sources=<acct>/<org> --apply
 
 # 3. Keep them in sync: quit the desktop app first, then link
-bun claude-session-merge.ts --canonical=<acct>/<org> --sources=<acct>/<org> --link --apply
+bun claude-desktop-merge.ts --canonical=<acct>/<org> --sources=<acct>/<org> --link --apply
 
 # 4. Changed your mind? Undo the linking (quit the desktop app first)
-bun claude-session-merge.ts --revert            # dry-run: preview what gets restored
-bun claude-session-merge.ts --revert --apply    # restore the pre-symlink backups
+bun claude-desktop-merge.ts --revert            # dry-run: preview what gets restored
+bun claude-desktop-merge.ts --revert --apply    # restore the pre-symlink backups
 ```
 
 | Flag | Meaning |
@@ -100,7 +100,7 @@ bun claude-session-merge.ts --revert --apply    # restore the pre-symlink backup
 | `--revert` | Undo a previous `--link`: restore each `*.bak-<ts>` backup over its symlink |
 | `--apply` | Execute. Without it, the tool is a dry run |
 | `--yes`, `-y` | Skip the confirmation prompt on `--apply` |
-| `--log-file=<path>` | Write the run log here (default: `logs/session-merge-<ts>.log`) |
+| `--log-file=<path>` | Write the run log here (default: `logs/desktop-merge-<ts>.log`) |
 | `--no-log` | Disable file logging for this run |
 | `--help`, `-h` | Show help |
 
@@ -109,8 +109,8 @@ bun claude-session-merge.ts --revert --apply    # restore the pre-symlink backup
 `--link` is fully reversible. It leaves a `*.bak-<timestamp>` backup next to every folder it turns into a symlink, and `--revert` walks those backups to put things back:
 
 ```sh
-bun claude-session-merge.ts --revert          # dry-run: show which symlinks would be restored
-bun claude-session-merge.ts --revert --apply  # drop each symlink, move the newest backup back
+bun claude-desktop-merge.ts --revert          # dry-run: show which symlinks would be restored
+bun claude-desktop-merge.ts --revert --apply  # drop each symlink, move the newest backup back
 ```
 
 - It only ever removes a **symlink**. If a real directory has reappeared at the original path (e.g. the desktop app recreated it), that's reported as a conflict and left untouched — nothing is overwritten.
@@ -124,7 +124,7 @@ The merged copies inside canonical are *not* touched by revert — reverting onl
 Every run is mirrored to a log file (ANSI colors stripped) so you have a record of exactly what was planned and applied:
 
 ```
-logs/session-merge-<timestamp>.log     # default, next to the script
+logs/desktop-merge-<timestamp>.log     # default, next to the script
 ```
 
 - `--log-file=<path>` writes the log somewhere else.
