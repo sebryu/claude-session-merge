@@ -6,6 +6,51 @@ Merge and sync **Claude desktop app** sessions across accounts — macOS, zero d
 
 Not affiliated with Anthropic. It only reorganizes local files the desktop app already wrote; it never uploads anything and never touches your transcripts.
 
+## Demo
+
+<p align="center">
+  <img src="docs/showcase.svg" alt="claude-desktop-merge dry run: discover every account, print a plan, change nothing" width="680">
+</p>
+
+A **dry run** discovers every account, prints exactly what it would copy, and changes nothing until you add `--apply`. There's a full walkthrough page at [`docs/index.html`](docs/index.html) — open it locally, or serve the `docs/` folder with GitHub Pages.
+
+<details>
+<summary>Same run, as plain text</summary>
+
+```text
+$ npx claude-desktop-merge
+claude-desktop-merge (macOS)
+BASE: ~/Library/Application Support/Claude
+Active account: be60c637
+
+Discovered locations:
+  1) be60c637/04127aae   (102 sessions)  [ACTIVE]
+       · Refactor auth middleware
+       · Wire up billing webhooks
+  2) d8755814/f9c0ba6b   (47 sessions)
+       · Fix flaky e2e test
+       · Draft launch checklist
+
+Choose CANONICAL location (number): 1
+Choose SOURCE location(s) — 'a' for all others: a
+1) MERGE only  2) MERGE then LINK — choose [1/2]: 1
+
+PLAN
+  Canonical: be60c637/04127aae
+  Source d8755814/f9c0ba6b
+    [claude-code-sessions] copy 47 files, 0 dirs; 0 conflicts
+    [agent-mode]           copy 41 files, 6 dirs; 2 conflicts (kept canonical)
+
+  Totals: 88 file(s) + 6 dir(s) to copy, 2 kept, 3 space(s) added
+
+DRY RUN — no filesystem changes were made.
+Re-run with --apply to execute the plan above.
+```
+
+<sub>Account/org IDs are shortened here for readability; the tool prints the full UUIDs.</sub>
+
+</details>
+
 ## Install (macOS)
 
 Pick whichever you like — all three give you a `claude-desktop-merge` command and **none of them require you to install anything first**.

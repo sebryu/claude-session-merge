@@ -1,0 +1,466 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>claude-desktop-merge — merge & sync Claude desktop sessions across accounts</title>
+  <meta name="description" content="A zero-dependency macOS CLI that merges Claude desktop-app sessions across accounts into one canonical list, dry-run by default and fully reversible.">
+  <meta name="color-scheme" content="light dark">
+</head>
+<body>
+<style>
+  :root{
+    --ground:#f4f6f9; --panel:#ffffff; --panel-2:#eef2f7; --line:#e2e7ef;
+    --ink:#131a24; --muted:#586274; --faint:#8b95a5;
+    --accent:#0d8ba0; --accent-ink:#0a6f80; --accent-soft:#dcf0f4;
+    --ok:#1c9b58; --warn:#a9760f; --danger:#cf3f3f;
+    --shadow:0 1px 2px rgba(16,24,40,.05), 0 10px 34px rgba(16,24,40,.07);
+    --radius:14px;
+    --mono:ui-monospace,"SF Mono",SFMono-Regular,Menlo,Monaco,"Cascadia Code","Roboto Mono",monospace;
+    --sans:-apple-system,BlinkMacSystemFont,"SF Pro Text","Segoe UI",system-ui,Roboto,sans-serif;
+  }
+  @media (prefers-color-scheme: dark){
+    :root{
+      --ground:#0a0d14; --panel:#111725; --panel-2:#0e131f; --line:#212a3a;
+      --ink:#d7dfea; --muted:#8a97ab; --faint:#5b6879;
+      --accent:#3fd0e3; --accent-ink:#8fe6f2; --accent-soft:#0f2a30;
+      --ok:#43d183; --warn:#e6b955; --danger:#ff6b6b;
+      --shadow:0 1px 2px rgba(0,0,0,.4), 0 14px 44px rgba(0,0,0,.45);
+    }
+  }
+  :root[data-theme="light"]{
+    --ground:#f4f6f9; --panel:#ffffff; --panel-2:#eef2f7; --line:#e2e7ef;
+    --ink:#131a24; --muted:#586274; --faint:#8b95a5;
+    --accent:#0d8ba0; --accent-ink:#0a6f80; --accent-soft:#dcf0f4;
+    --ok:#1c9b58; --warn:#a9760f; --danger:#cf3f3f;
+    --shadow:0 1px 2px rgba(16,24,40,.05), 0 10px 34px rgba(16,24,40,.07);
+  }
+  :root[data-theme="dark"]{
+    --ground:#0a0d14; --panel:#111725; --panel-2:#0e131f; --line:#212a3a;
+    --ink:#d7dfea; --muted:#8a97ab; --faint:#5b6879;
+    --accent:#3fd0e3; --accent-ink:#8fe6f2; --accent-soft:#0f2a30;
+    --ok:#43d183; --warn:#e6b955; --danger:#ff6b6b;
+    --shadow:0 1px 2px rgba(0,0,0,.4), 0 14px 44px rgba(0,0,0,.45);
+  }
+
+  *{box-sizing:border-box;}
+  body{margin:0;background:var(--ground);color:var(--ink);font-family:var(--sans);
+    font-size:17px;line-height:1.65;-webkit-font-smoothing:antialiased;text-rendering:optimizeLegibility;}
+  a{color:var(--accent-ink);text-decoration:none;}
+  a:hover{text-decoration:underline;}
+  :focus-visible{outline:2px solid var(--accent);outline-offset:2px;border-radius:4px;}
+  code,kbd,.mono{font-family:var(--mono);}
+  ::selection{background:var(--accent-soft);}
+
+  .wrap{max-width:1000px;margin:0 auto;padding:0 24px;}
+
+  /* top bar */
+  .top{position:sticky;top:0;z-index:20;backdrop-filter:saturate(1.4) blur(10px);
+    background:color-mix(in srgb, var(--ground) 82%, transparent);border-bottom:1px solid var(--line);}
+  .top .row{display:flex;align-items:center;justify-content:space-between;gap:16px;height:60px;}
+  .brand{display:flex;align-items:center;gap:10px;font-family:var(--mono);font-weight:600;
+    font-size:15px;letter-spacing:-.01em;color:var(--ink);}
+  .brand .dot{color:var(--ok);}
+  .top nav{display:flex;align-items:center;gap:8px;}
+  .top nav a{color:var(--muted);font-size:14px;padding:6px 10px;border-radius:8px;}
+  .top nav a:hover{color:var(--ink);background:var(--panel-2);text-decoration:none;}
+  .tbtn{display:inline-flex;align-items:center;justify-content:center;width:36px;height:34px;
+    border:1px solid var(--line);border-radius:9px;background:var(--panel);color:var(--muted);cursor:pointer;}
+  .tbtn:hover{color:var(--ink);border-color:var(--accent);}
+  .tbtn svg{width:17px;height:17px;}
+
+  /* rhythm */
+  .doc{display:flex;flex-direction:column;gap:clamp(3.2rem,7vw,5.2rem);padding:clamp(2.4rem,6vw,4rem) 0 5rem;}
+  section{scroll-margin-top:76px;}
+  .eyebrow{font-family:var(--mono);font-size:12px;text-transform:uppercase;letter-spacing:.14em;
+    color:var(--accent-ink);margin:0 0 .7rem;}
+  h1{font-size:clamp(2.1rem,5.4vw,3.15rem);line-height:1.05;letter-spacing:-.025em;font-weight:700;
+    margin:0 0 1rem;text-wrap:balance;}
+  h2{font-size:clamp(1.42rem,3.1vw,1.9rem);line-height:1.15;letter-spacing:-.02em;font-weight:650;
+    margin:0 0 .55rem;text-wrap:balance;}
+  h3{font-size:1.02rem;letter-spacing:-.01em;font-weight:650;margin:0 0 .3rem;}
+  p{margin:0 0 1rem;max-width:66ch;color:var(--ink);}
+  .lead{font-size:clamp(1.05rem,2vw,1.24rem);line-height:1.55;color:var(--muted);max-width:60ch;margin-bottom:1.6rem;}
+  .muted{color:var(--muted);}
+  .sec-head{max-width:62ch;margin-bottom:1.9rem;}
+  .sec-head p{color:var(--muted);margin-bottom:0;}
+
+  /* hero */
+  .hero{display:grid;grid-template-columns:1.02fr 1fr;gap:clamp(1.5rem,4vw,3rem);align-items:center;}
+  @media (max-width:860px){.hero{grid-template-columns:1fr;}}
+  .badges{display:flex;flex-wrap:wrap;gap:8px;margin-top:.4rem;}
+  .badge{font-family:var(--mono);font-size:12px;color:var(--muted);background:var(--panel);
+    border:1px solid var(--line);border-radius:999px;padding:5px 11px;display:inline-flex;gap:7px;align-items:center;}
+  .badge b{color:var(--ink);font-weight:600;}
+  .badge .g{color:var(--ok);} .badge .c{color:var(--accent-ink);}
+  .hero-term{filter:drop-shadow(0 24px 48px rgba(0,0,0,.28));}
+  .hero-term svg{width:100%;height:auto;display:block;border-radius:12px;}
+
+  /* command block (mini terminal) */
+  .cmd{position:relative;background:#0c0f17;border:1px solid #232a38;border-radius:11px;
+    box-shadow:var(--shadow);overflow:hidden;margin:1rem 0;}
+  .cmd .cmd-bar{display:flex;align-items:center;gap:7px;padding:9px 12px;background:#171b26;border-bottom:1px solid #232a38;}
+  .cmd .cmd-bar .tl{width:11px;height:11px;border-radius:50%;}
+  .cmd .cmd-bar .tag{margin-left:8px;font-family:var(--mono);font-size:11.5px;color:#6b7a8c;letter-spacing:.03em;}
+  .cmd pre{margin:0;padding:15px 16px;overflow-x:auto;font-family:var(--mono);font-size:14px;line-height:1.6;color:#c9d4de;}
+  .cmd pre .p{color:#3fd07f;} .cmd pre .cm{color:#6b7a8c;} .cmd pre .fl{color:#39c6da;}
+  .copy{position:absolute;top:7px;right:8px;font-family:var(--mono);font-size:11px;color:#8fa0b3;
+    background:#0c0f17;border:1px solid #2a3140;border-radius:7px;padding:4px 9px;cursor:pointer;z-index:2;}
+  .copy:hover{color:#fff;border-color:#39c6da;}
+  .copy.ok{color:#3fd07f;border-color:#2f6b46;}
+
+  /* panels / cards */
+  .panel{background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);box-shadow:var(--shadow);}
+  .grid{display:grid;gap:16px;}
+  .g3{grid-template-columns:repeat(3,1fr);}
+  .g2{grid-template-columns:1fr 1fr;}
+  @media (max-width:760px){.g3,.g2{grid-template-columns:1fr;}}
+  .card{padding:20px;display:flex;flex-direction:column;gap:.5rem;}
+  .card .k{font-family:var(--mono);font-size:12px;color:var(--accent-ink);letter-spacing:.02em;}
+  .card p{font-size:15px;color:var(--muted);margin:0;}
+
+  /* storage table */
+  .tbl-wrap{overflow-x:auto;border:1px solid var(--line);border-radius:var(--radius);box-shadow:var(--shadow);}
+  table{border-collapse:collapse;width:100%;font-size:15px;min-width:560px;background:var(--panel);}
+  th,td{text-align:left;padding:14px 16px;border-bottom:1px solid var(--line);vertical-align:top;}
+  thead th{font-size:12px;text-transform:uppercase;letter-spacing:.08em;color:var(--muted);font-weight:600;
+    background:var(--panel-2);}
+  tbody tr:last-child td{border-bottom:none;}
+  td .mono{font-size:13px;color:var(--muted);}
+  .pill{display:inline-flex;align-items:center;gap:6px;font-family:var(--mono);font-size:11.5px;font-weight:600;
+    padding:3px 9px;border-radius:999px;letter-spacing:.02em;white-space:nowrap;}
+  .pill.no{color:var(--ok);background:color-mix(in srgb,var(--ok) 14%,transparent);}
+  .pill.yes{color:var(--warn);background:color-mix(in srgb,var(--warn) 16%,transparent);}
+  .flag-tbl td:first-child{white-space:nowrap;}
+  .flag-tbl td:first-child code{color:var(--accent-ink);font-size:13px;}
+
+  /* steps */
+  .steps{display:grid;grid-template-columns:1fr 1fr;gap:16px;}
+  @media (max-width:760px){.steps{grid-template-columns:1fr;}}
+  .step{padding:22px;position:relative;overflow:hidden;}
+  .step .n{font-family:var(--mono);font-size:12px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;
+    display:inline-flex;align-items:center;gap:8px;margin-bottom:.6rem;}
+  .step.merge .n{color:var(--ok);} .step.link .n{color:var(--danger);}
+  .step .n .chip{font-size:10.5px;padding:2px 7px;border-radius:999px;font-weight:600;}
+  .step.merge .chip{color:var(--ok);background:color-mix(in srgb,var(--ok) 14%,transparent);}
+  .step.link .chip{color:var(--danger);background:color-mix(in srgb,var(--danger) 15%,transparent);}
+  .step h3{font-size:1.15rem;}
+  .step p{font-size:15px;color:var(--muted);margin:0;}
+  .rule{margin-top:16px;border-left:3px solid var(--accent);background:var(--accent-soft);
+    border-radius:0 12px 12px 0;padding:14px 18px;}
+  .rule b{color:var(--ink);}
+  .rule .mono{font-size:13px;color:var(--accent-ink);}
+
+  /* checklist */
+  .checks{display:grid;grid-template-columns:1fr 1fr;gap:12px 26px;list-style:none;padding:0;margin:0;}
+  @media (max-width:760px){.checks{grid-template-columns:1fr;}}
+  .checks li{display:flex;gap:11px;align-items:flex-start;font-size:15px;color:var(--muted);}
+  .checks li b{color:var(--ink);font-weight:600;}
+  .checks .ic{flex:0 0 auto;width:20px;height:20px;margin-top:1px;color:var(--ok);}
+
+  .note{font-size:13.5px;color:var(--faint);font-family:var(--mono);}
+  .callout{display:flex;gap:12px;align-items:flex-start;border:1px solid var(--line);border-left:3px solid var(--warn);
+    background:color-mix(in srgb,var(--warn) 7%,var(--panel));border-radius:0 12px 12px 0;padding:14px 18px;font-size:15px;}
+  .callout .ic{color:var(--warn);flex:0 0 auto;width:20px;height:20px;margin-top:2px;}
+
+  footer{border-top:1px solid var(--line);padding:28px 0 44px;color:var(--muted);font-size:14px;}
+  footer .row{display:flex;flex-wrap:wrap;gap:16px;justify-content:space-between;align-items:center;}
+  footer .mono{font-size:12.5px;color:var(--faint);}
+
+  @media (prefers-reduced-motion:no-preference){
+    .reveal{opacity:0;transform:translateY(10px);animation:rise .7s cubic-bezier(.2,.7,.2,1) forwards;}
+    @keyframes rise{to{opacity:1;transform:none;}}
+  }
+</style>
+<header class="top">
+  <div class="wrap row">
+    <span class="brand"><span class="dot">$</span> claude-desktop-merge</span>
+    <nav>
+      <a href="#install">Install</a>
+      <a href="#how">How it works</a>
+      <a href="#usage">Usage</a>
+      <a href="#safety">Safety</a>
+      <a href="https://github.com/sebryu/claude-desktop-merge">GitHub ↗</a>
+      <button class="tbtn" id="theme" type="button" aria-label="Toggle color theme" title="Toggle theme">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="4.2"/><path d="M12 2v2.4M12 19.6V22M2 12h2.4M19.6 12H22M4.6 4.6l1.7 1.7M17.7 17.7l1.7 1.7M19.4 4.6l-1.7 1.7M6.3 17.7l-1.7 1.7"/></svg>
+      </button>
+    </nav>
+  </div>
+</header>
+
+<main class="wrap">
+  <div class="doc">
+
+    <!-- HERO -->
+    <section class="hero" id="top">
+      <div>
+        <p class="eyebrow">macOS · zero-dependency · dry-run by default</p>
+        <h1>Bring every Claude&nbsp;desktop account&#39;s sessions back into one list.</h1>
+        <p class="lead">Log into a different Claude account and the desktop app shows an empty session list. Your conversations aren&#39;t gone — the app just scopes its session index per account. This tool reconciles that, safely, on your machine.</p>
+        <div class="cmd">
+    <button class="copy" data-copy>Copy</button>
+    <div class="cmd-bar"><span class="tl" style="background:#ff5f57"></span><span class="tl" style="background:#febc2e"></span><span class="tl" style="background:#28c840"></span><span class="tag">run it — nothing is installed</span></div>
+    <pre><span class="p">$</span> npx claude-desktop-merge</pre>
+  </div>
+        <div class="badges">
+          <span class="badge"><span class="g">●</span> <b>Dry-run</b> by default</span>
+          <span class="badge"><span class="c">↺</span> <b>Reversible</b> linking</span>
+          <span class="badge">Never touches <b>~/.claude</b></span>
+          <span class="badge">MIT</span>
+        </div>
+      </div>
+      <div class="hero-term reveal" aria-label="Terminal recording of a dry run">
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 664 728" width="664" height="728" class="cdm-term" role="img" aria-label="claude-desktop-merge dry-run terminal demo">
+  <title>claude-desktop-merge — dry-run demo</title>
+  <style>
+    /* A terminal is a deliberately dark surface — single-theme by design so it reads
+       the same (like a screenshot) on both a light and a dark host page. */
+    .cdm-term{
+      --bg:#0c0f17; --bar:#171b26; --stroke:#242a38;
+      --fg:#c9d4de; --dim:#6b7a8c; --grn:#3fd07f; --cyn:#39c6da; --blu:#5aa2ff; --ylw:#e6b955; --red:#ff6b6b;
+    }
+    .cdm-win{fill:var(--bg);stroke:var(--stroke);}
+    .cdm-bar{fill:var(--bar);}
+    .cdm-term text{font-family:ui-monospace,"SF Mono",SFMono-Regular,Menlo,Monaco,"Cascadia Code","Roboto Mono",monospace;
+         font-size:15px;fill:var(--fg);white-space:pre;}
+    .cdm-title{fill:var(--dim);font-size:12.5px;letter-spacing:.4px;}
+    .cdm-dim{fill:var(--dim);} .cdm-grn{fill:var(--grn);} .cdm-cyn{fill:var(--cyn);}
+    .cdm-blu{fill:var(--blu);} .cdm-ylw{fill:var(--ylw);} .cdm-red{fill:var(--red);}
+    .cdm-b{font-weight:700;}
+    /* Resting state is fully visible; the reveal only plays forward via fill:backwards,
+       so a renderer that strips CSS animation still shows the whole transcript. */
+    .cdm-ln{opacity:1;animation:cdm-reveal .34s ease backwards;}
+    @keyframes cdm-reveal{from{opacity:0;transform:translateY(4px);}to{opacity:1;transform:translateY(0);}}
+    .cdm-cursor{fill:var(--grn);animation:cdm-blink 1.05s steps(1) infinite;}
+    @keyframes cdm-blink{0%,50%{opacity:1;}50.01%,100%{opacity:0;}}
+    @media (prefers-reduced-motion: reduce){
+      .cdm-ln{animation:none;opacity:1;transform:none;} .cdm-cursor{animation:none;opacity:1;}
+    }
+  </style>
+  <rect x="1" y="1" width="662" height="726" rx="12" class="cdm-win" stroke-width="1.5"/>
+  <path d="M1 13 a12 12 0 0 1 12 -12 h638 a12 12 0 0 1 12 12 v27 h-662 z" class="cdm-bar"/>
+  <circle cx="22" cy="20" r="6" fill="#ff5f57"/>
+  <circle cx="42" cy="20" r="6" fill="#febc2e"/>
+  <circle cx="62" cy="20" r="6" fill="#28c840"/>
+  <text x="332" y="24" text-anchor="middle" class="cdm-title">claude-desktop-merge — dry run</text>
+  <text y="73" class="cdm-ln" style="animation-delay:0.35s"><tspan x="26" class="cdm-grn">$ </tspan><tspan class="cdm-kw">npx claude-desktop-merge</tspan></text>
+<text y="97" class="cdm-ln" style="animation-delay:0.67s"><tspan x="26" class="cdm-kw cdm-b">claude-desktop-merge</tspan><tspan class="cdm-dim"> (macOS)</tspan></text>
+<text y="121" class="cdm-ln" style="animation-delay:0.99s"><tspan x="26" class="cdm-dim">BASE: </tspan><tspan class="cdm-cyn">~/Library/Application Support/Claude</tspan></text>
+<text y="145" class="cdm-ln" style="animation-delay:1.31s"><tspan x="26" class="cdm-dim">Active account: </tspan><tspan class="cdm-grn">be60c637</tspan></text>
+<text y="169" class="cdm-ln" style="animation-delay:1.63s"><tspan> </tspan></text>
+<text y="193" class="cdm-ln" style="animation-delay:1.85s"><tspan x="26" class="cdm-b">Discovered locations:</tspan></text>
+<text y="217" class="cdm-ln" style="animation-delay:2.17s"><tspan x="26" class="cdm-b">  1) </tspan><tspan class="cdm-cyn">be60c637/04127aae</tspan><tspan class="cdm-dim">  (102 sessions)</tspan><tspan class="cdm-grn">  [ACTIVE]</tspan></text>
+<text y="241" class="cdm-ln" style="animation-delay:2.49s"><tspan x="26" class="cdm-dim">       · Refactor auth middleware</tspan></text>
+<text y="265" class="cdm-ln" style="animation-delay:2.81s"><tspan x="26" class="cdm-dim">       · Wire up billing webhooks</tspan></text>
+<text y="289" class="cdm-ln" style="animation-delay:3.13s"><tspan x="26" class="cdm-b">  2) </tspan><tspan class="cdm-cyn">d8755814/f9c0ba6b</tspan><tspan class="cdm-dim">  (47 sessions)</tspan></text>
+<text y="313" class="cdm-ln" style="animation-delay:3.45s"><tspan x="26" class="cdm-dim">       · Fix flaky e2e test</tspan></text>
+<text y="337" class="cdm-ln" style="animation-delay:3.77s"><tspan x="26" class="cdm-dim">       · Draft launch checklist</tspan></text>
+<text y="361" class="cdm-ln" style="animation-delay:4.09s"><tspan> </tspan></text>
+<text y="385" class="cdm-ln" style="animation-delay:4.32s"><tspan x="26" class="cdm-b">Choose CANONICAL location (number): </tspan><tspan class="cdm-grn">1</tspan></text>
+<text y="409" class="cdm-ln" style="animation-delay:4.64s"><tspan x="26" class="cdm-b">Choose SOURCE location(s) — 'a' for all others: </tspan><tspan class="cdm-grn">a</tspan></text>
+<text y="433" class="cdm-ln" style="animation-delay:4.96s"><tspan x="26" class="cdm-b">1) MERGE only  2) MERGE then LINK — choose [1/2]: </tspan><tspan class="cdm-grn">1</tspan></text>
+<text y="457" class="cdm-ln" style="animation-delay:5.28s"><tspan> </tspan></text>
+<text y="481" class="cdm-ln" style="animation-delay:5.50s"><tspan x="26" class="cdm-b">PLAN</tspan></text>
+<text y="505" class="cdm-ln" style="animation-delay:5.82s"><tspan x="26" class="cdm-kw">  Canonical: </tspan><tspan class="cdm-cyn">be60c637/04127aae</tspan></text>
+<text y="529" class="cdm-ln" style="animation-delay:6.14s"><tspan x="26" class="cdm-kw">  Source </tspan><tspan class="cdm-blu">d8755814/f9c0ba6b</tspan></text>
+<text y="553" class="cdm-ln" style="animation-delay:6.46s"><tspan x="26" class="cdm-kw">    [claude-code-sessions] copy </tspan><tspan class="cdm-grn">47</tspan><tspan class="cdm-kw"> files, </tspan><tspan class="cdm-grn">0</tspan><tspan class="cdm-kw"> dirs; 0 conflicts</tspan></text>
+<text y="577" class="cdm-ln" style="animation-delay:6.78s"><tspan x="26" class="cdm-kw">    [agent-mode] copy </tspan><tspan class="cdm-grn">41</tspan><tspan class="cdm-kw"> files, </tspan><tspan class="cdm-grn">6</tspan><tspan class="cdm-kw"> dirs; </tspan><tspan class="cdm-ylw">2</tspan><tspan class="cdm-kw"> conflicts </tspan><tspan class="cdm-dim">(kept canonical)</tspan></text>
+<text y="601" class="cdm-ln" style="animation-delay:7.10s"><tspan> </tspan></text>
+<text y="625" class="cdm-ln" style="animation-delay:7.33s"><tspan x="26" class="cdm-b">  Totals: </tspan><tspan class="cdm-grn">88</tspan><tspan class="cdm-kw"> file(s) + </tspan><tspan class="cdm-grn">6</tspan><tspan class="cdm-kw"> dir(s) to copy, </tspan><tspan class="cdm-ylw">2</tspan><tspan class="cdm-kw"> kept, </tspan><tspan class="cdm-grn">3</tspan><tspan class="cdm-kw"> space(s) added</tspan></text>
+<text y="649" class="cdm-ln" style="animation-delay:7.65s"><tspan> </tspan></text>
+<text y="673" class="cdm-ln" style="animation-delay:7.87s"><tspan x="26" class="cdm-ylw cdm-b">DRY RUN — no filesystem changes were made.</tspan></text>
+<text y="697" class="cdm-ln" style="animation-delay:8.19s"><tspan x="26" class="cdm-dim">Re-run with </tspan><tspan class="cdm-cyn">--apply</tspan><tspan class="cdm-dim"> to execute the plan above.</tspan></text>
+<rect x="444" y="688" width="9" height="17" class="cdm-cursor" style="animation-delay:8.71s"/>
+</svg>
+      </div>
+    </section>
+
+    <!-- PROBLEM / STORAGE MODEL -->
+    <section id="why">
+      <div class="sec-head">
+        <p class="eyebrow">Why it&#39;s safe</p>
+        <h2>Two different things, in two different places</h2>
+        <p>The macOS desktop app keeps your <em>transcripts</em> separately from the small <em>index</em> that lists them. Only the index is scoped per account — which is the entire reason switching accounts hides your sessions, and why fixing it never risks a conversation.</p>
+      </div>
+      <div class="tbl-wrap">
+        <table>
+          <thead><tr><th>What</th><th>Where it lives</th><th>Account-scoped?</th></tr></thead>
+          <tbody>
+            <tr>
+              <td><b>Transcripts</b><br><span class="muted" style="font-size:13.5px">the actual conversation</span></td>
+              <td><span class="mono">~/.claude/projects/&lt;cwd&gt;/&lt;id&gt;.jsonl</span></td>
+              <td><span class="pill no">No — global, shared with the CLI</span></td>
+            </tr>
+            <tr>
+              <td><b>Session index</b><br><span class="muted" style="font-size:13.5px">pointer files: title, model, cwd, archive state</span></td>
+              <td><span class="mono">…/Application Support/Claude/&lt;tree&gt;/&lt;account&gt;/&lt;org&gt;/local_&lt;id&gt;.json</span></td>
+              <td><span class="pill yes">Yes — one folder per account / org</span></td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+      <p class="note" style="margin-top:14px">Because transcripts are global, switching accounts never loses a conversation — the UI just stops <em>listing</em> it. This tool only reorganizes the small pointer files. It never reads, writes, moves, or deletes anything under <b>~/.claude</b> or any <b>.jsonl</b>.</p>
+    </section>
+
+    <!-- HOW IT WORKS -->
+    <section id="how">
+      <div class="sec-head">
+        <p class="eyebrow">How it works</p>
+        <h2>Canonical merge, then optional link</h2>
+        <p>A &ldquo;location&rdquo; is an <span class="mono">&lt;account&gt;/&lt;org&gt;</span> pair. The two steps run in order — the second is opt-in and reversible.</p>
+      </div>
+      <div class="steps">
+        <div class="step merge panel">
+          <span class="n">Step A · Merge <span class="chip">non-destructive</span></span>
+          <h3>Copy pointers into canonical</h3>
+          <p>Pick one canonical location. Copy the pointer files that exist only in other accounts <em>into</em> it, and union <span class="mono">spaces.json</span> by id (canonical wins). Nothing is overwritten; conflicts are reported and canonical is kept.</p>
+        </div>
+        <div class="step link panel">
+          <span class="n">Step B · Link <span class="chip">opt-in · reversible</span></span>
+          <h3>Symlink the others to canonical</h3>
+          <p>With <code>--link</code>, back up each other account&#39;s folder to <span class="mono">*.bak-&lt;timestamp&gt;</span> and replace it with a symlink to canonical, so all accounts share one live set. Undo anytime with <code>--revert</code>.</p>
+        </div>
+      </div>
+      <div class="rule">
+        <b>The one rule that keeps it consistent:</b> copy <em>into</em> canonical; symlink every other account <em>at</em> canonical. <span class="mono">Never copy into a folder you then link away.</span>
+      </div>
+      <p class="note" style="margin-top:14px">Pinned &amp; grouped sessions live in a single global LevelDB keyed by session id, so they follow the merged sessions automatically. The tool reads it read-only to report which pins carry over — it never edits it.</p>
+    </section>
+
+    <!-- INSTALL -->
+    <section id="install">
+      <div class="sec-head">
+        <p class="eyebrow">Install · macOS</p>
+        <h2>Three ways in — none need a prerequisite</h2>
+        <p>All three give you a <span class="mono">claude-desktop-merge</span> command. Then just run it: it&#39;s a dry run that changes nothing until you add <code>--apply</code>.</p>
+      </div>
+      <div class="grid g3">
+        <div class="card panel">
+          <span class="k">1 · one-line installer</span>
+          <h3>Simplest</h3>
+          <p>Puts it on your PATH; installs Bun for you if you have no runtime.</p>
+        </div>
+        <div class="card panel">
+          <span class="k">2 · npm</span>
+          <h3>If you have Node</h3>
+          <p>Run once with <span class="mono">npx</span>, or install the command globally.</p>
+        </div>
+        <div class="card panel">
+          <span class="k">3 · from source</span>
+          <h3>To read or hack on it</h3>
+          <p>Clone and run the single TypeScript file with Bun or Node ≥ 23.6.</p>
+        </div>
+      </div>
+      <div class="cmd">
+    <button class="copy" data-copy>Copy</button>
+    <div class="cmd-bar"><span class="tl" style="background:#ff5f57"></span><span class="tl" style="background:#febc2e"></span><span class="tl" style="background:#28c840"></span><span class="tag">1 · one-line installer</span></div>
+    <pre><span class="cm"># downloads the tool, adds it to your PATH</span>
+curl -fsSL https://raw.githubusercontent.com/sebryu/claude-desktop-merge/main/install.sh | bash</pre>
+  </div>
+      <div class="cmd">
+    <button class="copy" data-copy>Copy</button>
+    <div class="cmd-bar"><span class="tl" style="background:#ff5f57"></span><span class="tl" style="background:#febc2e"></span><span class="tl" style="background:#28c840"></span><span class="tag">2 · npm</span></div>
+    <pre><span class="p">$</span> npx claude-desktop-merge            <span class="cm"># run once, nothing installed</span>
+<span class="p">$</span> npm install -g claude-desktop-merge  <span class="cm"># or install globally</span></pre>
+  </div>
+      <div class="cmd">
+    <button class="copy" data-copy>Copy</button>
+    <div class="cmd-bar"><span class="tl" style="background:#ff5f57"></span><span class="tl" style="background:#febc2e"></span><span class="tl" style="background:#28c840"></span><span class="tag">3 · from source</span></div>
+    <pre><span class="p">$</span> git clone https://github.com/sebryu/claude-desktop-merge.git
+<span class="p">$</span> cd claude-desktop-merge
+<span class="p">$</span> bun claude-desktop-merge.ts          <span class="cm"># or: node claude-desktop-merge.ts</span></pre>
+  </div>
+      <p class="note">Uninstall — installer: <span class="mono">rm ~/.local/bin/claude-desktop-merge &amp;&amp; rm -rf ~/.local/share/claude-desktop-merge</span> · npm: <span class="mono">npm uninstall -g claude-desktop-merge</span></p>
+    </section>
+
+    <!-- USAGE -->
+    <section id="usage">
+      <div class="sec-head">
+        <p class="eyebrow">Usage</p>
+        <h2>One command; everything else is a flag</h2>
+        <p>Everything is a dry run until you pass <code>--apply</code>. The default run discovers your accounts and prints a plan.</p>
+      </div>
+      <div class="cmd">
+    <button class="copy" data-copy>Copy</button>
+    <div class="cmd-bar"><span class="tl" style="background:#ff5f57"></span><span class="tl" style="background:#febc2e"></span><span class="tl" style="background:#28c840"></span><span class="tag">common invocations</span></div>
+    <pre><span class="p">$</span> claude-desktop-merge                                <span class="cm"># interactive picker + plan (no changes)</span>
+<span class="p">$</span> claude-desktop-merge <span class="fl">--canonical</span>=A/O <span class="fl">--sources</span>=B/O <span class="fl">--apply</span>
+<span class="p">$</span> claude-desktop-merge <span class="fl">--canonical</span>=A/O <span class="fl">--all-others</span> <span class="fl">--link</span> <span class="fl">--apply</span>   <span class="cm"># quit the app first</span>
+<span class="p">$</span> claude-desktop-merge <span class="fl">--revert</span>                       <span class="cm"># preview undoing a --link</span></pre>
+  </div>
+      <div class="tbl-wrap">
+        <table class="flag-tbl">
+          <thead><tr><th>Flag</th><th>Meaning</th></tr></thead>
+          <tbody>
+            <tr><td><code>--canonical=&lt;a&gt;/&lt;o&gt;</code></td><td>Target location that receives the merged sessions.</td></tr>
+            <tr><td><code>--sources=&lt;a&gt;/&lt;o&gt;[,…]</code></td><td>One or more source locations to merge from.</td></tr>
+            <tr><td><code>--all-others</code></td><td>Use every non-canonical location as a source.</td></tr>
+            <tr><td><code>--link</code></td><td>Also do Step B: back up each source folder and symlink it to canonical.</td></tr>
+            <tr><td><code>--revert</code></td><td>Undo a previous <code>--link</code>: restore each <span class="mono">*.bak-&lt;ts&gt;</span> backup over its symlink.</td></tr>
+            <tr><td><code>--apply</code></td><td>Execute. Without it, the tool is a dry run.</td></tr>
+            <tr><td><code>--yes</code>, <code>-y</code></td><td>Skip the confirmation prompt on <code>--apply</code>.</td></tr>
+            <tr><td><code>--log-file=&lt;path&gt;</code></td><td>Write the run log here (default: <span class="mono">logs/desktop-merge-&lt;ts&gt;.log</span>).</td></tr>
+            <tr><td><code>--no-log</code></td><td>Disable file logging for this run.</td></tr>
+            <tr><td><code>--help</code>, <code>-h</code></td><td>Show help.</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- SAFETY -->
+    <section id="safety">
+      <div class="sec-head">
+        <p class="eyebrow">Safety</p>
+        <h2>Built to be reversible and quiet</h2>
+      </div>
+      <ul class="checks">
+        <li><svg class="ic" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 10.5l4 4 8-9"/></svg><span><b>Dry-run by default</b> — nothing changes without <code>--apply</code>.</span></li>
+        <li><svg class="ic" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 10.5l4 4 8-9"/></svg><span><b>Never overwrites</b> canonical files; conflicts are reported and canonical kept.</span></li>
+        <li><svg class="ic" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 10.5l4 4 8-9"/></svg><span><b>Backs up</b> every folder before symlinking (<span class="mono">*.bak-&lt;ts&gt;</span>), and <code>--revert</code> restores it.</span></li>
+        <li><svg class="ic" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 10.5l4 4 8-9"/></svg><span><b>Read-only</b> on LevelDB; <b>never touches</b> <span class="mono">~/.claude</span> transcripts.</span></li>
+        <li><svg class="ic" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 10.5l4 4 8-9"/></svg><span><b>Every run is logged</b> to a file for an audit trail.</span></li>
+        <li><svg class="ic" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 10.5l4 4 8-9"/></svg><span><b>Only removes a symlink</b> on revert — a real directory is treated as a conflict, untouched.</span></li>
+      </ul>
+      <div class="callout" style="margin-top:20px">
+        <svg class="ic" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10 2.6 18.5 17H1.5L10 2.6Z"/><path d="M10 8v4"/><path d="M10 15h.01"/></svg>
+        <span>Quit the Claude desktop app before <code>--link</code> or <code>--revert</code>, so it doesn&#39;t recreate the folders mid-operation.</span>
+      </div>
+    </section>
+
+  </div>
+</main>
+
+<footer>
+  <div class="wrap row">
+    <span>MIT · Not affiliated with Anthropic. It only reorganizes local files the desktop app already wrote.</span>
+    <span class="mono"><a href="https://github.com/sebryu/claude-desktop-merge">github.com/sebryu/claude-desktop-merge</a></span>
+  </div>
+</footer>
+
+<script>
+  (function(){
+    // theme toggle — respects OS by default, remembers an explicit choice
+    var root=document.documentElement, key="cdm-theme";
+    try{var saved=localStorage.getItem(key); if(saved) root.setAttribute("data-theme",saved);}catch(e){}
+    var btn=document.getElementById("theme");
+    if(btn) btn.addEventListener("click",function(){
+      var cur=root.getAttribute("data-theme");
+      if(!cur) cur=matchMedia("(prefers-color-scheme: dark)").matches?"dark":"light";
+      var next=cur==="dark"?"light":"dark";
+      root.setAttribute("data-theme",next);
+      try{localStorage.setItem(key,next);}catch(e){}
+    });
+    // copy buttons
+    document.querySelectorAll("[data-copy]").forEach(function(b){
+      b.addEventListener("click",function(){
+        var pre=b.parentElement.querySelector("pre");
+        var text=(pre?pre.innerText:"").replace(/^\s*\$\s?/gm,"").trim();
+        var done=function(){b.textContent="Copied"; b.classList.add("ok");
+          setTimeout(function(){b.textContent="Copy"; b.classList.remove("ok");},1400);};
+        if(navigator.clipboard&&navigator.clipboard.writeText){navigator.clipboard.writeText(text).then(done).catch(function(){});}
+      });
+    });
+  })();
+</script>
+</body>
+</html>
