@@ -5,6 +5,9 @@ logs/
 # LINK backups the tool creates (should never be inside the repo, but just in case)
 *.bak-*
 
+# npm build artifact (rebuilt by `bun run build` / prepublishOnly)
+dist/
+
 # macOS / editor cruft
 .DS_Store
 node_modules/

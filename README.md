@@ -6,15 +6,42 @@ Merge and sync **Claude desktop app** sessions across accounts — macOS, zero d
 
 Not affiliated with Anthropic. It only reorganizes local files the desktop app already wrote; it never uploads anything and never touches your transcripts.
 
-## Quick start
+## Install (macOS)
+
+Pick whichever you like — all three give you a `claude-desktop-merge` command and **none of them require you to install anything first**.
+
+**1. One-line installer** — the simplest. Downloads the tool and puts it on your PATH; if you don't already have a runtime it installs [Bun](https://bun.sh) for you.
 
 ```sh
+curl -fsSL https://raw.githubusercontent.com/sebryu/claude-desktop-merge/main/install.sh | bash
+```
+
+**2. npm** — if you already have Node:
+
+```sh
+npx claude-desktop-merge            # run once, nothing installed
+# or install the command globally:
+npm install -g claude-desktop-merge
+```
+
+**3. From source** — if you want to read or hack on it:
+
+```sh
+git clone https://github.com/sebryu/claude-desktop-merge.git
 cd claude-desktop-merge
-bun claude-desktop-merge.ts            # dry-run: discover accounts, print a plan, change nothing
-bun claude-desktop-merge.ts --revert   # dry-run: preview undoing a previous --link
+bun claude-desktop-merge.ts         # or: node claude-desktop-merge.ts   (Node >= 23.6)
+```
+
+Then run it — it's a **dry run** that changes nothing:
+
+```sh
+claude-desktop-merge                # discover accounts, print a plan
+claude-desktop-merge --revert       # preview undoing a previous --link
 ```
 
 That's the whole tool — **one command**; everything else is a flag, and **nothing changes until you add `--apply`.** See [Usage](#usage) for the flag table.
+
+> **Uninstall.** Installer: `rm ~/.local/bin/claude-desktop-merge && rm -rf ~/.local/share/claude-desktop-merge`. npm: `npm uninstall -g claude-desktop-merge`.
 
 ---
 
@@ -38,57 +65,27 @@ The one rule that keeps it consistent: **copy _into_ canonical; symlink every ot
 
 Pinned/grouped sessions live in a single global LevelDB keyed by session id, so they follow the merged sessions automatically — the tool reads it read-only to report which pins carry over, and never edits it.
 
-## Install
-
-Requires [Bun](https://bun.sh) and macOS.
-
-```sh
-git clone https://github.com/sebryu/claude-desktop-merge.git
-cd claude-desktop-merge
-bun claude-desktop-merge.ts        # dry-run: discovers accounts, prints a plan, changes nothing
-```
-
-The script is executable (it has a `#!/usr/bin/env bun` shebang), so you can also skip the `bun` prefix:
-
-```sh
-./claude-desktop-merge.ts --revert
-```
-
-Want it as a global command you can run from any directory? Run once, inside the repo:
-
-```sh
-bun link                        # registers the `claude-desktop-merge` bin
-claude-desktop-merge --help     # now works anywhere
-```
-
-Or grab just the script:
-
-```sh
-curl -fsSL https://raw.githubusercontent.com/sebryu/claude-desktop-merge/main/claude-desktop-merge.ts -o claude-desktop-merge.ts
-bun claude-desktop-merge.ts
-```
-
 ## Usage
 
 ```
-bun claude-desktop-merge.ts [flags]
+claude-desktop-merge [flags]
 ```
 
 Everything is a **dry run** until you pass `--apply`.
 
 ```sh
 # 1. See what's there (interactive picker + plan, no changes)
-bun claude-desktop-merge.ts
+claude-desktop-merge
 
 # 2. Merge one account's sessions into another
-bun claude-desktop-merge.ts --canonical=<acct>/<org> --sources=<acct>/<org> --apply
+claude-desktop-merge --canonical=<acct>/<org> --sources=<acct>/<org> --apply
 
 # 3. Keep them in sync: quit the desktop app first, then link
-bun claude-desktop-merge.ts --canonical=<acct>/<org> --sources=<acct>/<org> --link --apply
+claude-desktop-merge --canonical=<acct>/<org> --sources=<acct>/<org> --link --apply
 
 # 4. Changed your mind? Undo the linking (quit the desktop app first)
-bun claude-desktop-merge.ts --revert            # dry-run: preview what gets restored
-bun claude-desktop-merge.ts --revert --apply    # restore the pre-symlink backups
+claude-desktop-merge --revert            # dry-run: preview what gets restored
+claude-desktop-merge --revert --apply    # restore the pre-symlink backups
 ```
 
 | Flag | Meaning |
@@ -109,8 +106,8 @@ bun claude-desktop-merge.ts --revert --apply    # restore the pre-symlink backup
 `--link` is fully reversible. It leaves a `*.bak-<timestamp>` backup next to every folder it turns into a symlink, and `--revert` walks those backups to put things back:
 
 ```sh
-bun claude-desktop-merge.ts --revert          # dry-run: show which symlinks would be restored
-bun claude-desktop-merge.ts --revert --apply  # drop each symlink, move the newest backup back
+claude-desktop-merge --revert          # dry-run: show which symlinks would be restored
+claude-desktop-merge --revert --apply  # drop each symlink, move the newest backup back
 ```
 
 - It only ever removes a **symlink**. If a real directory has reappeared at the original path (e.g. the desktop app recreated it), that's reported as a conflict and left untouched — nothing is overwritten.
