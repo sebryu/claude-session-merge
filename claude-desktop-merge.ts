@@ -12,7 +12,8 @@
  * Concept — canonical merge, then optional link:
  *   A "location" = an <account>/<org> pair (present in one or both trees). MERGE (Step A, non-destructive)
  *   unions the pointer files/dirs from SOURCE locations INTO a CANONICAL location across both trees, and
- *   unions spaces.json by id (canonical wins). LINK (Step B, destructive, opt-in) backs up each source org
+ *   unions spaces.json (agent-mode tree) plus scheduled-tasks.json ("routines", both trees) by id — canonical
+ *   wins on every id collision. LINK (Step B, destructive, opt-in) backs up each source org
  *   dir and replaces it with a symlink to canonical so those accounts stay synchronized. Copy goes INTO
  *   canonical; symlinks point every other location AT canonical — never copy into a location you then link away.
  *
@@ -211,12 +212,24 @@ interface SourcePlan {
   conflicts: Conflict[];
   identical: number;
   spacesAdded: any[];
+  routinesAdded: Array<{ tree: string; task: any }>;
 }
 interface SpacesMerge {
   canonPath: string;
   before: number;
   merged: any[];
   added: number;
+  willWrite: boolean;
+}
+// scheduled-tasks.json ("routines") lives in BOTH trees, so one RoutinesMerge is produced per tree.
+interface RoutinesMerge {
+  tree: string;
+  canonPath: string;
+  before: number; // routines already in canonical for this tree
+  mergedTasks: any[]; // union of tasks by id (canonical wins on collision)
+  addedTasks: number;
+  recordedSkips: Record<string, any>; // union of recordedSkips maps (canonical wins on key)
+  skipsAdded: number;
   willWrite: boolean;
 }
 interface LinkPlan {
@@ -231,6 +244,7 @@ interface Plan {
   canonical: Location;
   sourcePlans: SourcePlan[];
   spacesMerge: SpacesMerge | null;
+  routinesMerges: RoutinesMerge[];
   linkPlans: LinkPlan[];
   sessionIds: Set<string>;
   spaceIds: Set<string>;
@@ -282,9 +296,10 @@ ${b("FLAGS")}
 
 ${b("CONCEPT")}
   A "location" is an <account>/<org> pair under the two session trees. MERGE (non-destructive) copies
-  pointer files/dirs from sources INTO canonical across both trees and unions spaces.json by id
-  (canonical wins). LINK (destructive, opt-in) replaces each source org dir with a symlink to canonical.
-  REVERT undoes LINK by restoring the *.bak-<ts> backups it left behind. Every run is logged to a file.
+  pointer files/dirs from sources INTO canonical across both trees and unions spaces.json plus
+  scheduled-tasks.json ("routines") by id (canonical wins). LINK (destructive, opt-in) replaces each
+  source org dir with a symlink to canonical. REVERT undoes LINK by restoring the *.bak-<ts> backups it
+  left behind. Every run is logged to a file.
 
 ${b("EXAMPLES")}
   claude-desktop-merge                                              # interactive, dry-run
@@ -330,12 +345,12 @@ function readOrgEntries(dir: string): OrgEntries {
     return out;
   }
   for (const d of dirents) {
-    if (d.name === "spaces.json") continue; // merged separately
+    if (d.name === "spaces.json" || d.name === "scheduled-tasks.json") continue; // merged separately
     const full = path.join(dir, d.name);
     const entryIsDir = d.isDirectory() || (d.isSymbolicLink() && isDir(full));
     if (entryIsDir) out.dirs.push(d.name);
     else if (d.isFile() && SESSION_FILE_RE.test(d.name)) out.files.push(d.name);
-    // other files (scheduled-tasks.json, .DS_Store, caches, ...) are intentionally ignored
+    // other files (.DS_Store, caches, ...) are intentionally ignored
   }
   out.files.sort();
   out.dirs.sort();
@@ -373,9 +388,23 @@ function readSpaces(spacesPath: string): any[] {
   return [];
 }
 
+interface ScheduledTasks {
+  tasks: any[];
+  recordedSkips: Record<string, any>;
+}
+function readScheduledTasks(tasksPath: string): ScheduledTasks {
+  const data = readJson(tasksPath);
+  const tasks = data && Array.isArray(data.scheduledTasks) ? data.scheduledTasks : [];
+  const recordedSkips =
+    data && data.recordedSkips && typeof data.recordedSkips === "object" && !Array.isArray(data.recordedSkips)
+      ? data.recordedSkips
+      : {};
+  return { tasks, recordedSkips };
+}
+
 // --- planning (pure reads, no mutations) ------------------------------------
 function buildSourcePlan(base: string, canon: Location, source: Location): SourcePlan {
-  const plan: SourcePlan = { source, copies: [], conflicts: [], identical: 0, spacesAdded: [] };
+  const plan: SourcePlan = { source, copies: [], conflicts: [], identical: 0, spacesAdded: [], routinesAdded: [] };
   for (const tree of TREES) {
     const srcDir = orgDir(base, tree, source);
     const canonDir = orgDir(base, tree, canon);
@@ -460,6 +489,46 @@ function buildPlan(base: string, canon: Location, sources: Location[], linkMode:
           willWrite: added > 0 || !exists(canonSpacesPath),
         };
 
+  // scheduled-tasks.json ("routines") merge — present in BOTH trees; canonical wins on id collision.
+  const routinesMerges: RoutinesMerge[] = [];
+  for (const tree of TREES) {
+    const canonTasksPath = path.join(orgDir(base, tree, canon), "scheduled-tasks.json");
+    const canonTasks = readScheduledTasks(canonTasksPath);
+    const mergedTasks = new Map<string, any>();
+    for (const t of canonTasks.tasks) if (t && t.id) mergedTasks.set(t.id, t);
+    const tasksBefore = mergedTasks.size;
+    const mergedSkips: Record<string, any> = { ...canonTasks.recordedSkips };
+    const skipsBefore = Object.keys(mergedSkips).length;
+
+    for (const s of sources) {
+      const srcTasks = readScheduledTasks(path.join(orgDir(base, tree, s), "scheduled-tasks.json"));
+      const sourcePlan = sourcePlanBySource.get(s.key);
+      for (const t of srcTasks.tasks) {
+        if (t && t.id && !mergedTasks.has(t.id)) {
+          mergedTasks.set(t.id, t);
+          if (sourcePlan) sourcePlan.routinesAdded.push({ tree, task: t });
+        }
+      }
+      for (const [k, v] of Object.entries(srcTasks.recordedSkips)) {
+        if (!(k in mergedSkips)) mergedSkips[k] = v;
+      }
+    }
+
+    const tasksArr = [...mergedTasks.values()];
+    const skipCount = Object.keys(mergedSkips).length;
+    if (tasksArr.length === 0 && skipCount === 0) continue; // no routines in either canonical or sources for this tree
+    routinesMerges.push({
+      tree,
+      canonPath: canonTasksPath,
+      before: tasksBefore,
+      mergedTasks: tasksArr,
+      addedTasks: tasksArr.length - tasksBefore,
+      recordedSkips: mergedSkips,
+      skipsAdded: skipCount - skipsBefore,
+      willWrite: tasksArr.length - tasksBefore > 0 || skipCount - skipsBefore > 0 || !exists(canonTasksPath),
+    });
+  }
+
   // link plans (destructive)
   const linkPlans: LinkPlan[] = [];
   if (linkMode) {
@@ -480,7 +549,7 @@ function buildPlan(base: string, canon: Location, sources: Location[], linkMode:
     }
   }
 
-  return { canonical: canon, sourcePlans, spacesMerge, linkPlans, sessionIds, spaceIds };
+  return { canonical: canon, sourcePlans, spacesMerge, routinesMerges, linkPlans, sessionIds, spaceIds };
 }
 
 function timestamp(): string {
@@ -537,6 +606,13 @@ function printPlan(plan: Plan, linkMode: boolean): void {
     if (sp.identical > 0) out.write(`    ${c.dim(`(${sp.identical} identical file(s) skipped)`)}\n`);
     if (sp.spacesAdded.length > 0)
       out.write(`    spaces.json: ${c.green("+" + sp.spacesAdded.length)} new space(s)\n`);
+    if (sp.routinesAdded.length > 0) {
+      out.write(`    scheduled-tasks.json: ${c.green("+" + sp.routinesAdded.length)} new routine(s)\n`);
+      for (const line of listCapped(
+        sp.routinesAdded.map((r) => `      + ${r.task?.id ?? "(unnamed)"}  ${c.dim("[" + r.tree + "]")}`)
+      ))
+        out.write(line + "\n");
+    }
   }
 
   if (plan.spacesMerge) {
@@ -544,6 +620,15 @@ function printPlan(plan: Plan, linkMode: boolean): void {
     out.write(
       `\n  ${c.bold("spaces.json (canonical)")}: ${m.before} existing, ${c.green("+" + m.added)} added, ` +
         `${m.merged.length} total${m.willWrite ? "" : c.dim(" (no write needed)")}\n`
+    );
+  }
+
+  for (const rm of plan.routinesMerges) {
+    out.write(
+      `\n  ${c.bold("scheduled-tasks.json (canonical)")} ${c.dim("[" + rm.tree + "]")}: ${rm.before} existing, ` +
+        `${c.green("+" + rm.addedTasks)} added, ${rm.mergedTasks.length} total` +
+        (rm.skipsAdded > 0 ? `, ${c.green("+" + rm.skipsAdded)} skip record(s)` : "") +
+        `${rm.willWrite ? "" : c.dim(" (no write needed)")}\n`
     );
   }
 
@@ -572,9 +657,11 @@ function printPlan(plan: Plan, linkMode: boolean): void {
     }
   }
 
+  const totalRoutinesAdded = plan.routinesMerges.reduce((n, rm) => n + rm.addedTasks, 0);
   out.write(
     `\n  ${c.bold("Totals")}: ${totalCopyFiles} file(s) + ${totalCopyDirs} dir(s) to copy, ` +
-      `${totalConflicts} conflict(s) kept, ${plan.spacesMerge ? plan.spacesMerge.added : 0} space(s) added` +
+      `${totalConflicts} conflict(s) kept, ${plan.spacesMerge ? plan.spacesMerge.added : 0} space(s) added, ` +
+      `${totalRoutinesAdded} routine(s) added` +
       (linkMode ? `, ${plan.linkPlans.filter((l) => !l.alreadySymlink).length} dir(s) to symlink` : "") +
       "\n"
   );
@@ -585,12 +672,21 @@ interface ExecResult {
   copiedFiles: number;
   copiedDirs: number;
   spacesWritten: boolean;
+  routinesWritten: number;
   linked: number;
   backedUp: number;
   errors: string[];
 }
 function executePlan(plan: Plan, linkMode: boolean): ExecResult {
-  const r: ExecResult = { copiedFiles: 0, copiedDirs: 0, spacesWritten: false, linked: 0, backedUp: 0, errors: [] };
+  const r: ExecResult = {
+    copiedFiles: 0,
+    copiedDirs: 0,
+    spacesWritten: false,
+    routinesWritten: 0,
+    linked: 0,
+    backedUp: 0,
+    errors: [],
+  };
 
   // Step A: merge copies INTO canonical
   for (const sp of plan.sourcePlans) {
@@ -619,6 +715,21 @@ function executePlan(plan: Plan, linkMode: boolean): ExecResult {
       r.spacesWritten = true;
     } catch (err) {
       r.errors.push(`write ${plan.spacesMerge.canonPath}: ${(err as Error).message}`);
+    }
+  }
+
+  // scheduled-tasks.json ("routines") merge write — one file per tree
+  for (const rm of plan.routinesMerges) {
+    if (!rm.willWrite) continue;
+    try {
+      fs.mkdirSync(path.dirname(rm.canonPath), { recursive: true });
+      fs.writeFileSync(
+        rm.canonPath,
+        JSON.stringify({ scheduledTasks: rm.mergedTasks, recordedSkips: rm.recordedSkips }, null, 2)
+      );
+      r.routinesWritten += 1;
+    } catch (err) {
+      r.errors.push(`write ${rm.canonPath}: ${(err as Error).message}`);
     }
   }
 
@@ -1091,6 +1202,7 @@ async function main(): Promise<void> {
     const hasWork =
       plan.sourcePlans.some((sp) => sp.copies.length > 0) ||
       (plan.spacesMerge?.willWrite ?? false) ||
+      plan.routinesMerges.some((rm) => rm.willWrite) ||
       plan.linkPlans.some((lp) => !lp.alreadySymlink);
     if (!hasWork) {
       process.stdout.write("\n" + c.green("Nothing to apply — plan is a no-op. Done.") + "\n");
@@ -1125,6 +1237,9 @@ async function main(): Promise<void> {
     process.stdout.write("\n" + c.bold("SUMMARY") + "\n");
     process.stdout.write(`  Copied: ${c.green(String(result.copiedFiles))} file(s), ${c.green(String(result.copiedDirs))} dir(s)\n`);
     process.stdout.write(`  spaces.json: ${result.spacesWritten ? c.green("written") : c.dim("unchanged")}\n`);
+    process.stdout.write(
+      `  scheduled-tasks.json: ${result.routinesWritten > 0 ? c.green(result.routinesWritten + " file(s) written") : c.dim("unchanged")}\n`
+    );
     if (linkMode)
       process.stdout.write(`  Linked: ${c.green(String(result.linked))} dir(s) symlinked, ${result.backedUp} backed up\n`);
     if (linkMode && result.linked > 0)
@@ -1139,7 +1254,7 @@ async function main(): Promise<void> {
     }
 
     levelDbReport(base, plan);
-    process.stdout.write("\n" + c.cyan("Reopen the Claude desktop app to see the merged sessions.") + "\n");
+    process.stdout.write("\n" + c.cyan("Reopen the Claude desktop app to see the merged sessions and routines.") + "\n");
   } finally {
     if (rl) rl.close();
     closeLogging();
