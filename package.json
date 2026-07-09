@@ -28,7 +28,7 @@
     "url": "https://github.com/sebryu/claude-desktop-merge/issues"
   },
   "bin": {
-    "claude-desktop-merge": "./dist/claude-desktop-merge.mjs"
+    "claude-desktop-merge": "dist/claude-desktop-merge.mjs"
   },
   "files": [
     "dist",
